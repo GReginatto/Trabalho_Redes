@@ -113,7 +113,7 @@ def handle_client(conn, addr):
         player_id = login_msg.get("player_id")
         if not player_id:
             send_json(conn, {"type": "LOGIN_FAIL", "payload": {"msg": "player_id é obrigatório."}})
-            conn.cl ose()
+            conn.close()
             return
     except:
         conn.close()
@@ -131,3 +131,69 @@ def handle_client(conn, addr):
         }
 
     send_json(conn, {"type": "LOGIN_SUCCESS", "payload": {"msg": f"Bem-vindo, {player_id}!"}})  
+
+    while True:
+        try:
+            data =  conn.recv(1024).decode('utf-8').strip()
+            if not data:   
+                break
+
+            messages = data.split('\n')
+            for message in message:
+                msg = json.loads(message)
+                player_id = clients[conn]
+                if msg["type"] == "JOIN_GAME":
+                    start_game()
+                
+                elif msg["type"] == "PLAY_MOVE":
+                    game_id = msg.get("game_id")
+                    payload = msg.get("payload", {})
+                    if game_id not in games:
+                        send_json(conn, {"type": "ERROR", "payload": {"msg": "Jogo não encontrado."}})
+                        continue
+                    game = games[game_id]
+
+                    if game["players"][game["turn"]] != player_id:
+                        send_json(conn, {"type": "ERROR", "payload": {"msg": "Não é sua vez."}})
+                        continue
+
+                    element = payload.get("element")
+                    ability_id = payload.get("ability_id")
+                    if element not in ELEMENTS:
+                        send_json(conn, {"type": "ERROR", "payload": {"msg": "Elemento inválido."}})
+                        continue
+                    if ability_id not in ABILITIES:
+                        send_json(conn, {"type": "ERROR", "payload": {"msg": "Habilidade inválida."}})
+                        continue
+
+                    player = players[player_id]
+                    opponent_id = [p for p in game["players"] if p != player_id][0]
+                    opponent = players[opponent_id]
+
+                    if ability_id == "pass":
+                        player["mana"] = min(player["mana"] + 50, MAX_MANA)
+                        broadcast_game(game_id, {
+                            "type": "GAME_UPDATE",
+                            "game_id": game_id,
+                            "payload": {
+                                "msg": f"{player_id} passou a vez e recuperou mana.",
+                                "players": {
+                                    player_id: {"hp": player["hp"], "mana": player["mana"]},
+                                    opponent_id: {"hp": opponent["hp"], "mana": opponent["mana"]}
+                                }
+                            }
+                        })
+                    
+                    else:
+                        ability = ABILITIES[ability_id]
+
+                        if player["mana"] < ability["mana_cost"]:
+                            send_json(conn, {"type": "ERROR", "payload": {"msg": "Mana insuficiente."}})
+                            continue
+                        
+                        if ability["special"] and player["hp"] < 25:
+                            send_json(conn, {"type": "ERROR", "payload": {"msg": "Você não pode usar habilidades especiais com HP baixo."}})
+                            continue
+
+                        player["mana"] -= ability["mana_cost"]
+                    
