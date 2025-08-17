@@ -3,14 +3,12 @@ import threading
 import json
 import random
 
-HOST = '' # Ip do computador
-PORT = 5000 # Porta do servidor
+HOST = ''  # IP do servidor ('' aceita conexões de qualquer interface)
+PORT = 5000
 
-clients = []
-players = {}
-turn = 0
+clients = {}
 games = {}
-game_started = False
+lock = threading.Lock()
 
 ELEMENTS = ["fire", "water", "plant", "electric", "earth"]
 
@@ -32,253 +30,151 @@ ABILITIES = {
 MAX_HP = 100
 MAX_MANA = 50
 
-lock = threading.Lock()
 
 def send_json(conn, data):
-    try:
-        json_data = json.dumps(data).encode('utf-8')
-        conn.sendall(json_data + b'\n')
-    except:
-        pass 
+    json_data = json.dumps(data).encode('utf-8')
+    conn.sendall(json_data + b'\n')
 
-def broadcast_game(game_id, data):
-    with lock:
-        for pid in games[game_id]['players']:
-           player = players[pid]
-           send_json(player['conn'], data)
 
-def calculate_damage(attacker_element, defender_element, base_dmg):
+def broadcast(game_id, data):
+    for player_id in games[game_id]["players"]:
+        conn = clients[player_id]
+        send_json(conn, data)
+
+
+def calculate_damage(attacker_element, defender_element, ability):
+    dmg = random.randint(*ability["dmg"])
+    # checa vantagem/desvantagem
     if attacker_element == defender_element:
-        return base_dmg // 2  
+        dmg //= 2
     elif ADVANTAGES[attacker_element] == defender_element:
-        return base_dmg * 2  
+        dmg *= 2
     elif DISADVANTAGES[attacker_element] == defender_element:
-        return base_dmg // 4  
-    else:
-        return base_dmg 
+        dmg //= 2
+    return dmg
 
-def start_game():
-    with lock:
-        waiting_players = [pid for pid, p in players.items() if p["game_id"] is None]
-        while len(waiting_players) >= 2:
-            p1 = waiting_players.pop(0)
-            p2 = waiting_players.pop(0)
-            game_id = f"Game{len(games) + 1}"
-            games[game_id] = {
-                'players': [p1, p2],
-                'turn': 0,
-                'started': "playing"
+
+def handle_game(game_id):
+    game = games[game_id]
+    players = list(game["players"].keys())
+    turn = 0
+
+    broadcast(game_id, {"type": "GAME_START", "game_id": game_id,
+                        "payload": {"players": players}})
+
+    while True:
+        current_player = players[turn % 2]
+        opponent = players[(turn + 1) % 2]
+
+        send_json(clients[current_player], {
+            "type": "YOUR_TURN",
+            "game_id": game_id,
+            "payload": game["players"][current_player]
+        })
+
+        # aguarda jogada
+        move = game["queue"].pop(0)
+        if move["player_id"] != current_player:
+            continue  # ignora fora de turno
+
+        action = move["payload"]
+
+        # ação escolhida
+        if action["move"] == "GAIN_MANA":
+            game["players"][current_player]["mana"] = min(
+                MAX_MANA, game["players"][current_player]["mana"] + 10)
+            result = f"{current_player} recuperou mana!"
+        else:
+            element = action["element"]
+            ability = ABILITIES[action["ability"]]
+
+            player_state = game["players"][current_player]
+            opp_state = game["players"][opponent]
+
+            if player_state["mana"] < ability["mana_cost"]:
+                result = f"{current_player} tentou usar {ability['name']} mas não tinha mana!"
+            else:
+                player_state["mana"] -= ability["mana_cost"]
+
+                if random.random() <= ability["accuracy"]:
+                    dmg = calculate_damage(element, opp_state["element"], ability)
+                    opp_state["hp"] = max(0, opp_state["hp"] - dmg)
+                    result = f"{current_player} atacou com {element} usando {ability['name']} causando {dmg} de dano!"
+                else:
+                    result = f"{current_player} errou o ataque!"
+
+        # envia atualização
+        broadcast(game_id, {
+            "type": "GAME_UPDATE",
+            "game_id": game_id,
+            "payload": {
+                "state": game["players"],
+                "log": result
             }
-            players[p1]["game_id"] = game_id
-            players[p2]["game_id"] = game_id
-            players[p1]["hp"] = MAX_HP
-            players[p2]["hp"] = MAX_HP
-            players[p1]["mana"] = MAX_MANA
-            players[p2]["mana"] = MAX_MANA
+        })
 
-            start_msg = {
-                "type": "GAME_START",
+        # checa fim de jogo
+        if game["players"][opponent]["hp"] <= 0:
+            broadcast(game_id, {
+                "type": "GAME_END",
                 "game_id": game_id,
-                "payload": {
-                    "players": {
-                        p1: { "hp":MAX_HP, "mana": MAX_MANA },
-                        p2: { "hp": MAX_HP, "mana": MAX_MANA }
-                    },
-                    },
-                    "msg": "Jogo iniciado!",
-             }
-            broadcast_game(game_id, start_msg)
-
-            send_json(players[p1]['conn'], {
-                "type": "YOUR_TURN",
-                "game_id": game_id,
-                "payload": {
-                    "msg": "Sua vez de jogar!",
-                }
+                "payload": {"winner": current_player}
             })
+            break
+
+        turn += 1
 
 
 def handle_client(conn, addr):
-    global clients, players, games
-    print(f"Conexão estabelecida com {addr}")
-
-    send_json(conn, {"type": "LOGIN_REQUEST", "payload": {"msg": "Envie JOIN_GAME para entrar na partida"}})
     try:
-        data = conn.recv(1024).decode('utf-8').strip()
-        login_msg = json.loads(data)
-        if login_msg["type"] != "JOIN_GAME":
-            send_json(conn, {"type": "LOGIN_FAIL", "payload": {"msg": "Comando inválido. Use JOIN_GAME para entrar na partida."}})
-            conn.close()
-            return
-        player_id = login_msg.get("player_id")
-        if not player_id:
-            send_json(conn, {"type": "LOGIN_FAIL", "payload": {"msg": "player_id é obrigatório."}})
-            conn.close()
-            return
-    except:
-        conn.close()
-        return
-
-    with lock:
-        clients[conn] = player_id
-        players[player_id] = {
-            "conn": conn,
-            "hp": MAX_HP,
-            "mana": MAX_MANA,
-            "game_id": None,
-            "last_element": None,
-            "last_ability": None
-        }
-
-    send_json(conn, {"type": "LOGIN_SUCCESS", "payload": {"msg": f"Bem-vindo, {player_id}!"}})  
-
-    while True:
-        try:
-            data =  conn.recv(1024).decode('utf-8').strip()
-            if not data:   
+        player_id = None
+        while True:
+            data = conn.recv(1024)
+            if not data:
                 break
 
-            messages = data.split('\n')
-            for message in message:
-                msg = json.loads(message)
-                player_id = clients[conn]
-                if msg["type"] == "JOIN_GAME":
-                    start_game()
-                
-                elif msg["type"] == "PLAY_MOVE":
-                    game_id = msg.get("game_id")
-                    payload = msg.get("payload", {})
+            for line in data.splitlines():
+                msg = json.loads(line.decode('utf-8'))
+
+                if msg["type"] == "LOGIN":
+                    player_id = msg["player_id"]
+                    clients[player_id] = conn
+                    send_json(conn, {"type": "STATUS", "status": "OK"})
+                elif msg["type"] == "JOIN_GAME":
+                    game_id = "game1"  # simplificação: só 1 partida
                     if game_id not in games:
-                        send_json(conn, {"type": "ERROR", "payload": {"msg": "Jogo não encontrado."}})
-                        continue
-                    game = games[game_id]
+                        games[game_id] = {
+                            "players": {},
+                            "queue": []
+                        }
+                    games[game_id]["players"][player_id] = {
+                        "hp": MAX_HP,
+                        "mana": MAX_MANA,
+                        "element": random.choice(ELEMENTS)
+                    }
+                    if len(games[game_id]["players"]) == 2:
+                        threading.Thread(target=handle_game, args=(game_id,), daemon=True).start()
 
-                    if game["players"][game["turn"]] != player_id:
-                        send_json(conn, {"type": "ERROR", "payload": {"msg": "Não é sua vez."}})
-                        continue
+                elif msg["type"] == "PLAY_MOVE":
+                    game_id = msg["game_id"]
+                    with lock:
+                        games[game_id]["queue"].append(msg)
 
-                    element = payload.get("element")
-                    ability_id = payload.get("ability_id")
-                    if element not in ELEMENTS:
-                        send_json(conn, {"type": "ERROR", "payload": {"msg": "Elemento inválido."}})
-                        continue
-                    if ability_id not in ABILITIES:
-                        send_json(conn, {"type": "ERROR", "payload": {"msg": "Habilidade inválida."}})
-                        continue
-
-                    player = players[player_id]
-                    opponent_id = [p for p in game["players"] if p != player_id][0]
-                    opponent = players[opponent_id]
-
-                    if ability_id == "pass":
-                        player["mana"] = min(player["mana"] + 50, MAX_MANA)
-                        broadcast_game(game_id, {
-                            "type": "GAME_UPDATE",
-                            "game_id": game_id,
-                            "payload": {
-                                "msg": f"{player_id} passou a vez e recuperou mana.",
-                                "players": {
-                                    player_id: {"hp": player["hp"], "mana": player["mana"]},
-                                    opponent_id: {"hp": opponent["hp"], "mana": opponent["mana"]}
-                                }
-                            }
-                        })
-                    
-                    else:
-                        ability = ABILITIES[ability_id]
-
-                        if player["mana"] < ability["mana_cost"]:
-                            send_json(conn, {"type": "ERROR", "payload": {"msg": "Mana insuficiente."}})
-                            continue
-                        
-                        if ability["special"] and player["hp"] < 25:
-                            send_json(conn, {"type": "ERROR", "payload": {"msg": "Você não pode usar habilidades especiais com HP baixo."}})
-                            continue
-
-                        player["mana"] -= ability["mana_cost"]
-
-                        if random.random() > ability["accuracy"]:
-                            broadcast_game(game_id, {
-                                "type": "GAME_UPDATE",
-                                "game_id": game_id,
-                                "payload": {
-                                    "msg": f"{player_id} usou {ability['name']} mas errou!",
-                                }
-                            })
-                        else: 
-                            base_dmg = random.randint(*ability["dmg"])
-                            total_dmg = calculate_damage(element, opponent["last_element"], base_dmg) if opponent["last_element"] else base_dmg
-                            opponent["hp"] = max(0, opponent["hp"] - total_dmg)
-                            broadcast_game(game_id, {
-                                "type": "GAME_UPDATE",
-                                "game_id": game_id,
-                                "payload": {
-                                    "msg": f"{player_id} usou {ability['name']} causando {total_dmg} de dano em {opponent_id}!",
-                                    "players": {
-                                        player_id: {"hp": player["hp"], "mana": player["mana"]},
-                                        opponent_id: {"hp": opponent["hp"], "mana": opponent["mana"]}
-                                    }
-                                }
-                            })
-                        
-                        player["last_element"] = element
-                        player["last_ability"] = ability_id
-
-                        if opponent["hp"] <= 0:
-                            broadcast_game(game_id, {
-                                "type": "GAME_END",
-                                "game_id": game_id,
-                                "payload": {
-                                    "msg": f"{player_id} venceu o jogo!",
-                                    "winner": player_id
-                                }
-                            })
-                            with lock:
-                                del games[game_id]
-                                players[player_id]["game_id"] = None
-                                players[opponent_id]["game_id"] = None
-                            continue
-
-                        game["turn"] = 1 - game["turn"]
-
-                        next_player_id = game["players"][game["turn"]]
-                        send_json(players[next_player_id]['conn'], {
-                            "type": "YOUR_TURN",
-                            "game_id": game_id,
-                            "payload": {
-                                "msg": "Sua vez de jogar!",
-                            }
-                        })
-                    
-                else:
-                    send_json(conn, {"type": "ERROR", "payload": {"msg": "Comando desconhecido."}})
-        except Exception as e:
-            print(f"[ERRO] {player_id} desconectado: {e}")
-            break
-    
-    with lock:
-        pid = clients.get(conn)
-        if pid:
-            del players[pid]
-            del clients[conn]
-    
-    conn.close()
-    print(f"Conexão encerrada com {addr}")
-
-def main():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((HOST, PORT))
-    server.listen()
-    print(f"Servidor rodando em {HOST}:{PORT}")
-
-    try:
-        while True:
-            conn, addr = server.accept()
-            threading.Thread(target=handle_client, args=(conn, addr)).start()
-    except KeyboardInterrupt:
-        print("Servidor encerrado.")
     finally:
-        server.close()
+        if player_id in clients:
+            del clients[player_id]
+        conn.close()
+
+
+def start_server():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((HOST, PORT))
+        s.listen()
+        print(f"Servidor rodando em {HOST}:{PORT}")
+        while True:
+            conn, addr = s.accept()
+            threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
+
 
 if __name__ == "__main__":
-    main()
+    start_server()
