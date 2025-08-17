@@ -2,7 +2,7 @@ import socket
 import json
 import threading
 
-HOST = '127.0.0.1' # IP do servidor
+HOST = '' # IP do servidor
 PORT = 5000
 
 
