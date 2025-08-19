@@ -2,7 +2,8 @@ import socket
 import json
 import threading
 
-HOST = '' # IP do servidor
+#HOST = '' # IP do servidor
+HOST = 'localhost'
 PORT = 5000
 
 
@@ -30,8 +31,9 @@ def display_game_state(players_data):
     print("\n--- ESTADO ATUAL DA PARTIDA ---")
     for pid, stats in players_data.items():
         id_display = f"{pid} (Você)" if pid == player_id else pid
+        element_display = f"Elemento: {stats['element'].capitalize()}" if pid == player_id else "Elemento: ????"
         mana_display = f"Mana: {stats['mana']}" if pid == player_id  else "Mana: ????"
-        print(f"  {id_display:<20} HP: {stats['hp']:<4} | {mana_display:<20}")
+        print(f"  {id_display:<20} HP: {stats['hp']:<4} | {element_display:<22} | {mana_display:<20}")
     print("--------------------------------\n")
 
 def receive_messages():
@@ -48,7 +50,16 @@ def receive_messages():
                 msg_type = response.get("type")
                 payload = response.get("payload", {})
                 
-                print(f"\n[SERVIDOR] {payload.get('msg', '')}")
+                server_message = ""
+                if 'log' in payload:
+                    server_message = payload['log']
+                elif 'winner' in payload:
+                    server_message = f"O Vencedor é: {payload['winner']}!"
+                elif 'msg' in payload:
+                    server_message = payload['msg']
+
+                if server_message:
+                    print(f"\n[SERVIDOR] {server_message}")
 
                 if msg_type == "GAME_START":
                     with lock: game_id = response.get("game_id")
