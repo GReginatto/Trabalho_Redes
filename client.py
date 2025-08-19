@@ -19,6 +19,7 @@ player_id = None
 game_id = None
 is_my_turn = False
 lock = threading.Lock()
+my_player_state = {}
 
 def send_json(data):
     if client_socket:
@@ -69,6 +70,7 @@ def receive_messages():
                     if "players" in payload: display_game_state(payload["players"])
 
                 elif msg_type == "YOUR_TURN":
+                    my_player_state = payload
                     with lock: is_my_turn = True
                 
                 elif msg_type == "GAME_END":
@@ -94,7 +96,16 @@ def prompt_for_action():
         except: pass
 
     print("\nEscolha uma habilidade:")
-    for key, ability in ABILITIES.items(): print(f"  {key}. {ability['name']} (Mana: {ability['mana_cost']})")
+    for key, ability in ABILITIES.items():
+    # Ataque especial de 1 uso
+        if ability.get("special"):
+            if not my_player_state.get("special_attack_used", False):
+                status = "[DISPONÍVEL]"
+            else:
+                status = "[USADO]"
+            print(f"  {key}. {ability['name']} (Mana: {ability['mana_cost']}) {status}")
+        else:
+            print(f"  {key}. {ability['name']} (Mana: {ability['mana_cost']})")
     print("  pass. Passar a vez")
 
     ability_choice = ""
