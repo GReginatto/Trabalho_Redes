@@ -2,6 +2,7 @@ import socket
 import threading
 import json
 import random
+import queue
 
 HOST = ''  # IP do servidor ('' aceita conexões de qualquer interface)
 PORT = 5000
@@ -22,12 +23,12 @@ ADVANTAGES = {
 DISADVANTAGES = {v: k for k, v in ADVANTAGES.items()}
 
 ABILITIES = {
-    1: {"name": "Ataque Forte", "dmg": (25, 35), "accuracy": 0.6, "mana_cost": 15, "special": False},
-    2: {"name": "Ataque Rápido", "dmg": (10, 20), "accuracy": 0.9, "mana_cost": 7, "special": False},
-    3: {"name": "Ataque Especial", "dmg": (30, 50), "accuracy": 0.7, "mana_cost": 20, "special": True}
+    1: {"name": "Ataque Forte", "dmg": (20, 25), "accuracy": 0.6, "mana_cost": 20, "special": False},
+    2: {"name": "Ataque Rápido", "dmg": (5, 15), "accuracy": 0.9, "mana_cost": 10, "special": False},
+    3: {"name": "Ataque Especial", "dmg": (30, 50), "accuracy": 0.7, "mana_cost": 30, "special": True}
 }
 
-MAX_HP = 100
+MAX_HP = 150
 MAX_MANA = 50
 
 
@@ -60,7 +61,7 @@ def handle_game(game_id):
     turn = 0
 
     broadcast(game_id, {"type": "GAME_START", "game_id": game_id,
-                        "payload": {"players": players}})
+                        "payload": {"players": game["players"]}})
 
     while True:
         current_player = players[turn % 2]
@@ -73,20 +74,21 @@ def handle_game(game_id):
         })
 
         # aguarda jogada
-        move = game["queue"].pop(0)
+        move = game["queue"].get()
         if move["player_id"] != current_player:
             continue  # ignora fora de turno
 
         action = move["payload"]
+        ability_id = action["ability_id"]
 
         # ação escolhida
-        if action["move"] == "GAIN_MANA":
+        if ability_id == "pass":
             game["players"][current_player]["mana"] = min(
-                MAX_MANA, game["players"][current_player]["mana"] + 10)
+                MAX_MANA, game["players"][current_player]["mana"] + 15)
             result = f"{current_player} recuperou mana!"
         else:
             element = action["element"]
-            ability = ABILITIES[action["ability"]]
+            ability = ABILITIES[action["ability_id"]]
 
             player_state = game["players"][current_player]
             opp_state = game["players"][opponent]
@@ -108,7 +110,7 @@ def handle_game(game_id):
             "type": "GAME_UPDATE",
             "game_id": game_id,
             "payload": {
-                "state": game["players"],
+                "players": game["players"],
                 "log": result
             }
         })
@@ -136,16 +138,16 @@ def handle_client(conn, addr):
             for line in data.splitlines():
                 msg = json.loads(line.decode('utf-8'))
 
-                if msg["type"] == "LOGIN":
+                if msg["type"] == "JOIN_GAME":
                     player_id = msg["player_id"]
                     clients[player_id] = conn
-                    send_json(conn, {"type": "STATUS", "status": "OK"})
-                elif msg["type"] == "JOIN_GAME":
-                    game_id = "game1"  # simplificação: só 1 partida
+                    print(f"Player '{player_id}' entrou no jogo")
+                
+                    game_id = "game1"
                     if game_id not in games:
                         games[game_id] = {
                             "players": {},
-                            "queue": []
+                            "queue": queue.Queue()
                         }
                     games[game_id]["players"][player_id] = {
                         "hp": MAX_HP,
@@ -153,12 +155,13 @@ def handle_client(conn, addr):
                         "element": random.choice(ELEMENTS)
                     }
                     if len(games[game_id]["players"]) == 2:
+                        print(f"Jogadores encontrados. Iniciando jogo '{game_id}'.") # Optional
                         threading.Thread(target=handle_game, args=(game_id,), daemon=True).start()
 
                 elif msg["type"] == "PLAY_MOVE":
                     game_id = msg["game_id"]
-                    with lock:
-                        games[game_id]["queue"].append(msg)
+                    msg["player_id"] = player_id
+                    games[game_id]["queue"].put(msg)
 
     finally:
         if player_id in clients:
