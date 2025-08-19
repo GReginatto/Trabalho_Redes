@@ -2,16 +2,16 @@ import socket
 import json
 import threading
 
-#HOST = '' # IP do servidor
-HOST = 'localhost' # usar para testar em uma maquina
+#HOST = 'IP DA MAQUINA COM O SERVIDOR RODANDO' # IP do servidor
+HOST = '127.0.0.1' # usar para testar em uma maquina
 PORT = 5000
 
 
 ELEMENTS = ["fire", "water", "plant", "electric", "earth"]
 ABILITIES = {
-    "1": {"name": "Ataque Forte", "mana_cost": 20},
-    "2": {"name": "Ataque Rápido", "mana_cost": 10},
-    "3": {"name": "Ataque Especial", "mana_cost": 30}
+    "1": {"name": "Ataque Forte", "mana_cost": 20, "dmg": (20, 25)},
+    "2": {"name": "Ataque Rápido", "mana_cost": 10, "dmg": (5, 15)},
+    "3": {"name": "Ataque Especial", "mana_cost": 30, "dmg": (40, 60)}
 }
 
 client_socket = None
@@ -97,15 +97,16 @@ def prompt_for_action():
 
     print("\nEscolha uma habilidade:")
     for key, ability in ABILITIES.items():
+        damage_range = f"Dano: {ability['dmg'][0]}-{ability['dmg'][1]}"
     # Ataque especial de 1 uso
         if ability.get("special"):
             if not my_player_state.get("special_attack_used", False):
                 status = "[DISPONÍVEL]"
             else:
                 status = "[USADO]"
-            print(f"  {key}. {ability['name']} (Mana: {ability['mana_cost']}) {status}")
+            print(f"  {key}. {ability['name']:<18} | {damage_range:<15} | Mana: {ability['mana_cost']:<4} {status}")
         else:
-            print(f"  {key}. {ability['name']} (Mana: {ability['mana_cost']})")
+            print(f"  {key}. {ability['name']:<18} | {damage_range:<15} | Mana: {ability['mana_cost']:<4}")
     print("  pass. Passar a vez")
 
     ability_choice = ""
