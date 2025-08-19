@@ -25,7 +25,7 @@ DISADVANTAGES = {v: k for k, v in ADVANTAGES.items()}
 ABILITIES = {
     1: {"name": "Ataque Forte", "dmg": (20, 25), "accuracy": 0.6, "mana_cost": 20, "special": False},
     2: {"name": "Ataque Rápido", "dmg": (5, 15), "accuracy": 0.9, "mana_cost": 10, "special": False},
-    3: {"name": "Ataque Especial", "dmg": (30, 50), "accuracy": 0.7, "mana_cost": 30, "special": True}
+    3: {"name": "Ataque Especial", "dmg": (40, 60), "accuracy": 1, "mana_cost": 30, "special": True}
 }
 
 MAX_HP = 150
@@ -89,14 +89,19 @@ def handle_game(game_id):
         else:
             element = action["element"]
             ability = ABILITIES[action["ability_id"]]
-
             player_state = game["players"][current_player]
             opp_state = game["players"][opponent]
 
-            if player_state["mana"] < ability["mana_cost"]:
+            if ability.get("special") and player_state["special_attack_used"]:
+                result = f"{current_player} tentou usar {ability['name']}, mas já foi utilizado!"
+
+            elif player_state["mana"] < ability["mana_cost"]:
                 result = f"{current_player} tentou usar {ability['name']} mas não tinha mana!"
             else:
                 player_state["mana"] -= ability["mana_cost"]
+
+                if ability.get("special"):
+                    player_state["special_attack_used"] = True
 
                 if random.random() <= ability["accuracy"]:
                     dmg = calculate_damage(element, opp_state["element"], ability)
@@ -152,7 +157,8 @@ def handle_client(conn, addr):
                     games[game_id]["players"][player_id] = {
                         "hp": MAX_HP,
                         "mana": MAX_MANA,
-                        "element": random.choice(ELEMENTS)
+                        "element": random.choice(ELEMENTS),
+                        "special_attack_used": False
                     }
                     if len(games[game_id]["players"]) == 2:
                         print(f"Jogadores encontrados. Iniciando jogo '{game_id}'.") # Optional
