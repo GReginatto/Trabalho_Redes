@@ -38,9 +38,16 @@ def send_json(conn, data):
 
 
 def broadcast(game_id, data):
-    for player_id in games[game_id]["players"]:
-        conn = clients[player_id]
-        send_json(conn, data)
+    player_ids_in_game = list(games[game_id]["players"].keys())
+    
+    for player_id in player_ids_in_game:
+        # Checa se o player ainda esta no dicionario de clients
+        if player_id in clients:
+            conn = clients[player_id]
+            try:
+                send_json(conn, data)
+            except Exception as e:
+                print(f"[BROADCAST FAILED] erro ao enviar para {player_id}: {e}")
 
 
 def calculate_damage(attacker_element, defender_element, ability):
@@ -75,6 +82,19 @@ def handle_game(game_id):
 
         # aguarda jogada
         move = game["queue"].get()
+
+        if move.get("type") == "DISCONNECT": # caso alguem sair
+            disconnected_player = move['player_id']
+            winner = opponent if disconnected_player == current_player else current_player
+            print(f"[GAME END] {disconnected_player} saiu do jogo.")
+            
+            broadcast(game_id, {
+                "type": "GAME_END",
+                "game_id": game_id,
+                "payload": {"winner": winner, "log": f"Player {disconnected_player} saiu."}
+            })
+            break  # Encerra o jogo
+
         if move["player_id"] != current_player:
             continue  # ignora fora de turno
 
@@ -170,8 +190,15 @@ def handle_client(conn, addr):
                     games[game_id]["queue"].put(msg)
 
     finally:
-        if player_id in clients:
-            del clients[player_id]
+        if player_id:
+            for game_id, game_data in games.items():
+                if player_id in game_data["players"]:
+                    game_data["queue"].put({"type": "DISCONNECT", "player_id": player_id})
+                    print(f"[INFO] Player '{player_id}' disconnected, notifying game '{game_id}'.")
+                    break
+
+            if player_id in clients:
+                del clients[player_id]
         conn.close()
 
 
