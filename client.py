@@ -3,7 +3,7 @@ import json
 import threading
 
 #HOST = '' # IP do servidor
-HOST = 'localhost'
+HOST = 'localhost' # usar para testar em uma maquina
 PORT = 5000
 
 
