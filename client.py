@@ -9,9 +9,9 @@ PORT = 5000
 
 ELEMENTS = ["fire", "water", "plant", "electric", "earth"]
 ABILITIES = {
-    "1": {"name": "Ataque Forte", "mana_cost": 15},
-    "2": {"name": "Ataque Rápido", "mana_cost": 7},
-    "3": {"name": "Ataque Especial", "mana_cost": 20}
+    "1": {"name": "Ataque Forte", "mana_cost": 20},
+    "2": {"name": "Ataque Rápido", "mana_cost": 10},
+    "3": {"name": "Ataque Especial", "mana_cost": 30}
 }
 
 client_socket = None
